@@ -45,7 +45,7 @@ func init() {
 	}
 
 	if appid == "" || forwardUrl == "" || openIdConfigUrl == "" || redirectUrl == "" {
-		fmt.Println("appid, forwardUrl, openIdConfigUrl is required")
+		fmt.Println("appid, forwardUrl, openIdConfigUrl, redirectUrl is required")
 		return
 	}
 	var err error
@@ -185,6 +185,52 @@ func main() {
 			proxy.ServeHTTP(w, r)
 		}
 	})
+
+	http.HandleFunc("/user-info", func(w http.ResponseWriter, r *http.Request) {
+		cookie, _ := r.Cookie("synology-sso-access-token")
+		if cookie != nil && cookie.Value != "" {
+			endpoint, _ := url.Parse(tokenEndpoint)
+			if endpoint.Scheme == "http" {
+				endpoint.Host = endpoint.Host + ":5000"
+			}
+			if endpoint.Scheme == "https" {
+				endpoint.Host = endpoint.Host + ":5001"
+			}
+			finalUrl := fmt.Sprintf("%s://%s%s", endpoint.Scheme, endpoint.Host, endpoint.Path)
+			urlWithParams := fmt.Sprintf("%s?action=exchange&app_id=%s&access_token=%s", finalUrl, appid, cookie.Value)
+			req, _ := http.NewRequest("GET", urlWithParams, nil)
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			if err != nil {
+				w.WriteHeader(401)
+				return
+			}
+			defer resp.Body.Close()
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				w.WriteHeader(401)
+				return
+
+			}
+			responseBody := make(map[string]interface{})
+			err = json.Unmarshal(body, &responseBody)
+			if err != nil {
+				w.WriteHeader(401)
+				return
+			}
+
+			if responseBody["success"] != true {
+				w.WriteHeader(401)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			w.Write(body)
+			return
+		} else {
+			w.WriteHeader(401)
+		}
+	})
+
 	fmt.Println("server is running on :10000")
 	err := http.ListenAndServe(":10000", nil)
 	if err != nil {
